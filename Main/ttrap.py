@@ -212,31 +212,31 @@ class Ttrap():
         '''
         traps = [
             {
-                "energy": 0.87,
-                "density": 1.3e-3*6.3e28,
+                "energy": 1.18,
+                "density": 1e-6*6.3e28,
                 "materials": [2]
             },
             {
                 "energy": 1.0,
-                "density": 4e-4*6.3e28,
+                "density": 0*6.3e28,
                 "materials": [2]
             }
             ,
             {
                 "energy": 1.5,
-                "density": n_trap_3_,
+                "density": 0,
                 "materials": [2]
             }
             ,
             {
-                "energy": 0.98,
-                "density":0,
+                "energy": 1.01,
+                "density": 2e-2*7.5e28,
                 "materials": [1]
             }
             ,
             {
-                "energy": 1.4,
-                "density": 0,
+                "energy": 2.5,
+                "density": 1e-4*7.5e28,
                 "materials": [1]
             }
         ]
@@ -255,13 +255,12 @@ class Ttrap():
         print('Meshing ...')
         initial_number_of_cells = mesh_parameters["initial_number_of_cells"]
         size = mesh_parameters["size"]
-        mesh = IntervalMesh(initial_number_of_cells, 0, size)
         if "refinements" in mesh_parameters:
             for refinement in mesh_parameters["refinements"]:
                 nb_cells_ref = refinement["cells"]
                 refinement_point = refinement["x"]
                 print("Mesh size before local refinement is " + str(len(mesh.cells())))
-                while len(mesh.cells()) < initial_number_of_cells + nb_cells_ref:
+                while len(mesh.cells()) <= initial_number_of_cells + nb_cells_ref:
                     cell_markers = MeshFunction("bool", mesh, mesh.topology().dim())
                     cell_markers.set_all(False)
                     for cell in cells(mesh):
@@ -297,12 +296,16 @@ class Ttrap():
             #print(float(dt))
             nb_it, converged = solver.solve()
             if float(dt) < dt_min:
+                print('\007')
                 sys.exit('Error: stepsize reached minimal value')
         if t > t_stop:
             if float(dt) > stepsize_stop_max:
                 dt.assign(stepsize_stop_max)
 
         else:
+            #print(nb_it)
+            #print(float(dt))
+
             if nb_it < 5:
                 dt.assign(float(dt)*stepsize_change_ratio)
             else:
@@ -326,36 +329,40 @@ class myclass(Ttrap):
             materials = []
             material1 = {
                 "alpha": Constant(1.1e-10),  # lattice constant ()
-                "beta": Constant(6*6.3e28),  # number of solute sites per atom (6 for W)
+                "beta": 6*6.3e28,  # number of solute sites per atom (6 for W)
                 "density": 7.5e28,
-                "borders": [0, 20e-9],
+                "borders": [0, 0.6e-6],
                 "E_diff": 0.39,
-                "D_0": 4.1e-7,
+                "D_0":  5.1e-9,
                 "id": 1
             }
             material2 = {
                 "alpha": Constant(1.1e-10),
-                "beta": Constant(6*6.3e28),
+                "beta": 6*6.3e28,
                 "density": 6.3e28,
-                "borders": [0, 20e-6],
+                "borders": [0.6e-6, 60e-6],
                 "E_diff": 0.39,
                 "D_0": 4.1e-7,
                 "id": 2
             }
-            materials = [material2]
+            materials = [material1, material2]
             return materials
 
         self.__mesh_parameters = {
-            "initial_number_of_cells": 100,
-            "size": 20e-6,
+            "initial_number_of_cells": 200,
+            "size": 60e-6,
             "refinements": [
                 {
+                    "cells": 400,
+                    "x": 5.5e-6
+                },
+                {
                     "cells": 500,
-                    "x": 2e-6
+                    "x": 1.6e-6
                 },
                 {
                     "cells": 100,
-                    "x": 25e-9
+                    "x": 10e-9
                 }
             ],
             }
@@ -371,12 +378,12 @@ class myclass(Ttrap):
     def getMeshParameters(self):
         return self.__mesh_parameters
     # Declaration of variables
-    implantation_time = 400.0
-    resting_time = 50
-    ramp = 8
-    delta_TDS = 500
-    r = 0
-    flux = 2.5e19  # /6.3e28
+    implantation_time = 2
+    resting_time = 1000
+    ramp = 1e-5
+    delta_TDS = 0#500
+    r = 0.32
+    flux = 1e22  # /6.3e28
     n_trap_3a_max = 1e-1*Constant(6.3e28)
     n_trap_3b_max = 1e-2*Constant(6.3e28)
     rate_3a = 6e-4
@@ -386,12 +393,12 @@ class myclass(Ttrap):
     k_B = 8.6e-5  # Boltzmann constant
     TDS_time = int(delta_TDS / ramp) + 1
     Time = implantation_time+resting_time+TDS_time
-    num_steps = 3*int(implantation_time+resting_time+TDS_time)
+    num_steps = 2000*int(implantation_time+resting_time+TDS_time)
     dT = Time / num_steps  # time step size
     t = 0  # Initialising time to 0s
-    stepsize_change_ratio = 1.25
+    stepsize_change_ratio = 1.1
     t_stop = implantation_time + resting_time - 20
-    stepsize_stop_max = 0.5
+    stepsize_stop_max = 1
     dt_min = 1e-5
 
 ttrap = myclass()
@@ -426,7 +433,7 @@ materials = ttrap.getMaterials()
 mesh = ttrap.getMesh()
 
 # Define function space for system of concentrations and properties
-P1 = FiniteElement('P', interval, 1)
+P1 = FiniteElement('P', triangle, 1)
 element = MixedElement([P1, P1, P1, P1, P1, P1])
 V = FunctionSpace(mesh, element)
 W = FunctionSpace(mesh, 'P', 1)
@@ -479,8 +486,8 @@ n_trap_3_ = Function(W)
 
 # Define expressions used in variational forms
 print('Defining source terms')
-center = 4.5e-9 #+ 20e-9
-width = 2.5e-9
+center = 1.7e-9 #+ 20e-9
+width = 1.11e-9
 f = Expression('1/(width*pow(2*3.14,0.5))*  \
                exp(-0.5*pow(((x[0]-center)/width), 2))',
                degree=2, center=center, width=width)
@@ -492,7 +499,7 @@ flux_ = Expression('t <= implantation_time ? flux : 0',
 
 print('Defining variational problem')
 temp = Expression('t <= (implantation_time+resting_time) ? \
-                  300 : 300+ramp*(t-(implantation_time+resting_time))',
+                  700 : 700+ramp*(t-(implantation_time+resting_time))',
                   implantation_time=implantation_time,
                   resting_time=resting_time,
                   ramp=ramp,
@@ -572,7 +579,7 @@ while t < Time:
     xdmf_u_5.write(_u_5, t)
     xdmf_u_6.write(_u_6, t)
     retention = Function(W)
-    retention = project(_u_1)
+    #retention = project(_u_1)
     i = 1
     total_trap = 0
     for trap in traps:
