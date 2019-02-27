@@ -157,7 +157,7 @@ class Ttrap():
         source_sol = - (1-r)*flux_*f*v_1*dx
 
         F = 0
-        F += transient_sol + source_sol + diff_sol
+        F += transient_sol + diff_sol + source_sol 
         i = 1
         for trap in traps:
             #print(i)
@@ -212,32 +212,32 @@ class Ttrap():
         '''
         traps = [
             {
-                "energy": 0.87,
-                "density": 1.3e-3*6.3e28,
+                "energy": 0.85,
+                "density": 0.5e-4*6.3e28,
                 "materials": [2]
             },
             {
                 "energy": 1.0,
-                "density": 4e-4*6.3e28,
+                "density": 0.5e-4*6.3e28,
                 "materials": [2]
             }
             ,
             {
-                "energy": 1.5,
-                "density": n_trap_3_,
+                "energy": 1.65,
+                "density": 9e-4*6.3e28,#n_trap_3_,
                 "materials": [2]
             }
             ,
             {
-                "energy": 0.98,
-                "density":0,
-                "materials": [1]
+                "energy": 1.85,
+                "density":28e-4*6.3e28,
+                "materials": [2]
             }
             ,
             {
-                "energy": 1.4,
-                "density": 0,
-                "materials": [1]
+                "energy": 2.06,
+                "density": 8e-4*6.3e28,
+                "materials": [2]
             }
         ]
         return traps
@@ -274,7 +274,7 @@ class Ttrap():
             print('No refinement parameters found')
         return mesh
 
-    def adaptative_timestep(self, converged, nb_it, dt, dt_min,
+    def adaptative_timestep(self, converged, nb_it, dt, dt_min, dt_max,
                             stepsize_change_ratio, t, t_stop,
                             stepsize_stop_max):
         '''
@@ -301,14 +301,49 @@ class Ttrap():
         if t > t_stop:
             if float(dt) > stepsize_stop_max:
                 dt.assign(stepsize_stop_max)
-
         else:
             if nb_it < 5:
                 dt.assign(float(dt)*stepsize_change_ratio)
             else:
                 dt.assign(float(dt)/stepsize_change_ratio)
         
+        if float(dt) > dt_max:
+            dt.assign(dt_max)
         return dt
+
+    def formulation_surface_model_1D(self, surface_parameters):
+        n_surf = surface_parameters['n_surf']
+        Pr = surface_parameters['Pr']
+        sigma_exc = surface_parameters['sigma_exc']
+        nu_0d = surface_parameters['nu_0d']
+        nu_0sb = surface_parameters['nu_0sb']
+        nu_0bs = surface_parameters['nu_0bs']
+        lambda_des = surface_parameters['lambda_des']
+        lambda_abs = surface_parameters['lambda_abs']
+        E_D = surface_parameters['E_D']
+        E_A = surface_parameters['E_A']
+        E_R = surface_parameters['E_R']
+        D_0 = surface_parameters['D_0']
+        E_diff = surface_parameters['E_diff']
+
+        teta = c_surf / n_surf
+        phi_atom = (1 - Pr)*flux_atom*(1 - teta)
+        phi_exc = flux_atom*sigma_exc*c_surf
+        phi_desorb = 2*nu_0d*lambda_des**2*exp(-2*E_D/(k_B*temp))*c_surf**2
+        phi_sb = nu_0sb*exp(-E_A/k_B/temp)*c_surf
+        phi_bs = nu_0bs*lambda_abs*exp(-E_R/k_B/temp)*cm0*(1-teta)
+        phi_diff = -D_0*exp(-E_diff/k_B/temp)*gradient
+
+        F = (cm0 - cm0_n)/dt*v0*dx + (c_surf - c_surf_n)/dt*v_surf*dx
+
+        F += -phi_atom*v_surf*dx   + phi_exc*v_surf*dx + phi_desorb*v_surf*dx + phi_sb*v_surf*dx - phi_bs*v_surf*dx 
+
+        F += 1/alpha(0) * (-phi_sb * v0*dx + phi_bs*v0*dx + phi_diff*v0*dx)
+        return F
+    
+    def compute_gradient_1D(self, solution):
+        gradient = -assemble(dot(grad(solution), n)*ds)
+        return gradient
 
 
 class myclass(Ttrap):
@@ -337,17 +372,38 @@ class myclass(Ttrap):
                 "alpha": Constant(1.1e-10),
                 "beta": Constant(6*6.3e28),
                 "density": 6.3e28,
-                "borders": [0, 20e-6],
-                "E_diff": 0.39,
-                "D_0": 4.1e-7,
+                "borders": [0, 20e-4],
+                "E_diff": 0.2,
+                "D_0": 1.91e-7,
                 "id": 2
             }
             materials = [material2]
             return materials
 
+        def surface_parameters():
+            rho = 6.3e28
+            n_TIS = 6*rho
+            n_surf = 6.9*rho**(2/3)
+            parameters = {
+                'n_surf': n_surf,
+                'Pr': 0.81,
+                'sigma_exc': 1.7e-21,
+                'nu_0d': 1e13,
+                'nu_0sb': 1e13,
+                'nu_0bs': 1e13,
+                'lambda_des': 1/(n_surf**(1/2)),
+                'lambda_abs': n_surf/n_TIS,
+                'E_D': 0.69,
+                'E_A': 1.33,
+                'E_R': 0.2,
+                'D_0': 1.91e-7,
+                'E_diff': 0.2
+            }
+            return parameters
+        self.__surface_parameters = surface_parameters()
         self.__mesh_parameters = {
-            "initial_number_of_cells": 100,
-            "size": 20e-6,
+            "initial_number_of_cells": 3000,
+            "size": 20e-4,
             "refinements": [
                 {
                     "cells": 500,
@@ -362,6 +418,9 @@ class myclass(Ttrap):
         self.__mesh = ttrap.mesh_and_refine(self.__mesh_parameters)
         self.__materials = define_materials()
 
+    def getSurfaceParameters(self):
+        return self.__surface_parameters
+
     def getMesh(self):
         return self.__mesh
 
@@ -371,12 +430,12 @@ class myclass(Ttrap):
     def getMeshParameters(self):
         return self.__mesh_parameters
     # Declaration of variables
-    implantation_time = 400.0
-    resting_time = 50
-    ramp = 8
-    delta_TDS = 500
+    implantation_time = 144*3600
+    resting_time = 8*3600#50
+    ramp = 0.25
+    delta_TDS = 700
     r = 0
-    flux = 2.5e19  # /6.3e28
+    flux =  0#2.5e19  # /6.3e28
     n_trap_3a_max = 1e-1*Constant(6.3e28)
     n_trap_3b_max = 1e-2*Constant(6.3e28)
     rate_3a = 6e-4
@@ -384,15 +443,16 @@ class myclass(Ttrap):
     xp = 1e-6
     v_0 = 1e13  # frequency factor s-1
     k_B = 8.6e-5  # Boltzmann constant
-    TDS_time = int(delta_TDS / ramp) + 1
+    TDS_time = int(delta_TDS / ramp) #+ 1
     Time = implantation_time+resting_time+TDS_time
-    num_steps = 3*int(implantation_time+resting_time+TDS_time)
+    num_steps = 10000*int(implantation_time+resting_time+TDS_time)
     dT = Time / num_steps  # time step size
     t = 0  # Initialising time to 0s
-    stepsize_change_ratio = 1.25
-    t_stop = implantation_time + resting_time - 20
+    stepsize_change_ratio = 1.1
+    t_stop = implantation_time + int(17*resting_time/18)
     stepsize_stop_max = 0.5
     dt_min = 1e-5
+    dt_max = 1300
 
 ttrap = myclass()
 
@@ -420,20 +480,34 @@ t_stop = ttrap.t_stop
 stepsize_stop_max = ttrap.stepsize_stop_max
 size = ttrap.getMeshParameters()["size"]
 dt_min = ttrap.dt_min
+dt_max = ttrap.dt_max
 
 # Mesh and refinement
 materials = ttrap.getMaterials()
 mesh = ttrap.getMesh()
-
+n = FacetNormal(mesh)
+surface_parameters = ttrap.getSurfaceParameters()
 # Define function space for system of concentrations and properties
+parameters["allow_extrapolation"] = True
 P1 = FiniteElement('P', interval, 1)
 element = MixedElement([P1, P1, P1, P1, P1, P1])
 V = FunctionSpace(mesh, element)
 W = FunctionSpace(mesh, 'P', 1)
 V0 = FunctionSpace(mesh, 'DG', 0)
+gradient = Constant(0.0)
+
+#Vector function space for surface model
+DG0 = VectorFunctionSpace(mesh, "DG", 0, dim=2) 
+surface_quantities = Function(DG0)
+cm0, c_surf = split(surface_quantities)
+
+v0, v_surf = TestFunctions(DG0)
+surface_quantities_n = Function(DG0)
+cm0_n, c_surf_n = split(surface_quantities_n)
 
 # Define and mark subdomains
 volume_markers, dx = ttrap.subdomains(mesh, materials)
+print('enlever ça')
 
 # BCs
 print('Defining boundary conditions')
@@ -445,6 +519,7 @@ def inside(x, on_boundary):
 
 def outside(x, on_boundary):
     return on_boundary and (near(x[0], size))
+
 # #Tritium concentration
 inside_bc_c = Expression(('0', '0', '0', '0', '0', '0'), t=0, degree=1)
 bci_c = DirichletBC(V, inside_bc_c, inside)
@@ -491,12 +566,14 @@ flux_ = Expression('t <= implantation_time ? flux : 0',
                    flux=flux, degree=1)
 
 print('Defining variational problem')
-temp = Expression('t <= (implantation_time+resting_time) ? \
-                  300 : 300+ramp*(t-(implantation_time+resting_time))',
+temp = Expression('t <= implantation_time ? \
+                  500 : (t <= implantation_time + resting_time ? 300 : 300+ramp*(t-(implantation_time+resting_time)))',
                   implantation_time=implantation_time,
                   resting_time=resting_time,
                   ramp=ramp,
                   t=0, degree=2)
+
+flux_atom = Expression('t < implantation_time? 2.6e19 : 0', t=t, implantation_time=implantation_time, degree=0)
 D = ttrap.update_D(mesh, volume_markers, materials, temp(size/2))
 alpha = ttrap.update_alpha(mesh, volume_markers, materials)
 beta = ttrap.update_beta(mesh, volume_markers, materials)
@@ -505,6 +582,7 @@ beta = ttrap.update_beta(mesh, volume_markers, materials)
 # Define variational problem
 traps = ttrap.define_traps(n_trap_3_)
 F = ttrap.formulation(traps, solutions, testfunctions, previous_solutions)
+F_surface = ttrap.formulation_surface_model_1D(surface_parameters)
 
 F_n3 = ((n_trap_3 - n_trap_3_n)/dt)*v_trap_3*dx
 F_n3 += -(1-r)*flux_*((1 - n_trap_3_n/n_trap_3a_max)*rate_3a*f + (1 - n_trap_3_n/n_trap_3b_max)*rate_3b*teta)*v_trap_3 * dx
@@ -529,16 +607,19 @@ set_log_level(30)  # Set the log level to WARNING
 
 timer = Timer()  # start timer
 while t < Time:
-    # Update current time
-    t += float(dt)
-    temp.t += float(dt)
-    flux_.t += float(dt)
-    if t > implantation_time:
-        D = ttrap.update_D(mesh, volume_markers, materials, temp(size/2))
-
+    
     print(str(round(t/Time*100, 2)) + ' %        ' + str(round(t, 1)) + ' s' +
           "    Ellapsed time so far: %s s" % round(timer.elapsed()[0], 1),
           end="\r")
+    
+    solve(F_surface == 0, surface_quantities, [])
+    cm0, c_surf = surface_quantities.split()
+    surface_model_activated = True
+    if surface_model_activated is True:
+        bcs = [DirichletBC(V, Expression(('cm0', '0', '0', '0', '0', '0'), \
+               cm0=cm0(0.5), degree=1), inside), bco_c]
+        gradient.assign(ttrap.compute_gradient_1D(u_n[0])) #TODO find a way to calculate gradient of cm(x=0)
+        #print([t, float(dt), cm0(0.5), c_surf(0.5)])
     
     J = derivative(F, u, du)  # Define the Jacobian
     problem = NonlinearVariationalProblem(F, u, bcs, J)
@@ -547,14 +628,9 @@ while t < Time:
     nb_it, converged = solver.solve()
     dt = ttrap.adaptative_timestep(converged=converged, nb_it=nb_it, dt=dt,
                                    stepsize_change_ratio=stepsize_change_ratio,
-                                   dt_min=dt_min, t=t, t_stop=t_stop,
+                                   dt_min=dt_min, dt_max=dt_max, t=t, t_stop=t_stop,
                                    stepsize_stop_max=stepsize_stop_max)
-    
-    #print("nb_ité", nb_it)
-    #print("Converged", converged)
-    #print("dt", float(dt))
-    #print(solve(F == 0, u, bcs,
-    #            solver_parameters={"newton_solver": {"absolute_tolerance": 1e-19}}))
+
     solve(lhs(F_n3) == rhs(F_n3), n_trap_3_, [])
     _u_1, _u_2, _u_3, _u_4, _u_5, _u_6 = u.split()
     res = [_u_1, _u_2, _u_3, _u_4, _u_5, _u_6]
@@ -591,6 +667,14 @@ while t < Time:
     # Update previous solutions
     u_n.assign(u)
     n_trap_3_n.assign(n_trap_3_)
+    surface_quantities_n.assign(surface_quantities)
+    # Update current time
+    t += float(dt)
+    temp.t += float(dt)
+    flux_.t += float(dt)
+    flux_atom.t += float(dt)
+    if t > implantation_time:
+        D = ttrap.update_D(mesh, volume_markers, materials, temp(size/2))
 
 ttrap.export_TDS(filedesorption)
 print('\007s')
